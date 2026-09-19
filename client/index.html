@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resumable Realtime Chat — Problem 1</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface2: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-dim: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --orange: #f0883e;
+      --purple: #bc8cff;
+      font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      grid-template-rows: auto 1fr;
+      gap: 0;
+    }
+
+    /* ── Header ── */
+    header {
+      grid-column: 1 / -1;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--surface);
+    }
+
+    header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    header .meta {
+      display: flex;
+      gap: 20px;
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-left: auto;
+    }
+
+    header .meta span b { color: var(--text); }
+
+    /* ── Status badge ── */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 3px 10px;
+      border-radius: 99px;
+      text-transform: uppercase;
+    }
+
+    .status-badge::before {
+      content: '';
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .status-badge.idle       { color: var(--text-dim); background: var(--surface2); }
+    .status-badge.connected  { color: var(--green); background: #1a3a20; }
+    .status-badge.reconnecting { color: var(--yellow); background: #362a00; animation: pulse 1s ease-in-out infinite; }
+    .status-badge.disconnected { color: var(--red); background: #3a1a1a; }
+    .status-badge.completed  { color: var(--accent); background: #0d2a4a; }
+    .status-badge.failed     { color: var(--red); background: #3a1a1a; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* ── Main panel ── */
+    main {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .card-body { padding: 16px; }
+
+    /* ── Form ── */
+    #msg-form {
+      display: flex;
+      gap: 10px;
+    }
+
+    #msg-input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 14px;
+      padding: 9px 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    #msg-input:focus { border-color: var(--accent); }
+
+    button {
+      background: var(--accent);
+      color: #0d1117;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 9px 18px;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button:not(:disabled):hover { opacity: 0.85; }
+
+    #disconnect-btn {
+      background: var(--surface2);
+      color: var(--yellow);
+      border: 1px solid var(--border);
+    }
+
+    /* ── Response ── */
+    #response-text {
+      font-size: 15px;
+      line-height: 1.7;
+      min-height: 80px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text);
+    }
+
+    /* Streaming cursor blink */
+    #response-text::after {
+      content: '▋';
+      animation: blink 1s step-end infinite;
+      color: var(--accent);
+      opacity: 0;
+    }
+
+    .running #response-text::after { opacity: 1; }
+
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── Run state badge ── */
+    .run-state {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .run-state.running   { background: #362a00; color: var(--yellow); }
+    .run-state.completed { background: #0d2a4a; color: var(--accent); }
+    .run-state.failed    { background: #3a1a1a; color: var(--red); }
+    .run-state.interrupted { background: var(--surface2); color: var(--text-dim); }
+
+    /* ── Side panel ── */
+    aside {
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .side-section {
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+      font-size: 12px;
+    }
+
+    .side-section h3 {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+    }
+
+    .kv-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 0;
+      color: var(--text-dim);
+    }
+
+    .kv-row span:last-child {
+      color: var(--text);
+      font-family: 'Fira Code', ui-monospace, monospace;
+      font-size: 11px;
+    }
+
+    /* ── Event log ── */
+    .log-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    #event-log {
+      list-style: none;
+    }
+
+    .log-entry {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 5px 16px;
+      font-size: 11px;
+      border-bottom: 1px solid transparent;
+      transition: background 0.1s;
+    }
+
+    .log-entry:hover { background: var(--surface2); }
+
+    .log-seq {
+      color: var(--text-dim);
+      font-family: monospace;
+      min-width: 36px;
+    }
+
+    .log-type {
+      font-weight: 600;
+      font-family: monospace;
+    }
+
+    .log-chunk         .log-type { color: var(--accent); }
+    .log-run_completed .log-type { color: var(--green); }
+    .log-run_failed    .log-type { color: var(--red); }
+    .log-run_started   .log-type { color: var(--purple); }
+    .log-user_message  .log-type { color: var(--orange); }
+    .log-error         .log-type { color: var(--red); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⚡ Resumable Realtime Chat</h1>
+    <span id="conn-status" class="status-badge idle">Idle</span>
+    <div class="meta">
+      <span>Conv: <b id="conv-id">—</b></span>
+      <span>Run state: <b id="run-state" class="run-state">—</b></span>
+      <span>Chunks: <b id="chunk-count">0</b></span>
+      <span>Cursor: <b id="cursor-val">0</b></span>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="card-header">Send a message</div>
+      <div class="card-body">
+        <form id="msg-form">
+          <input
+            id="msg-input"
+            type="text"
+            placeholder="Type a message and press Enter…"
+            autocomplete="off"
+            autofocus
+          />
+          <button id="send-btn" type="submit">Send</button>
+          <button id="disconnect-btn" type="button" disabled>⚡ Simulate Disconnect</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card" style="flex:1;">
+      <div class="card-header">Streaming response</div>
+      <div class="card-body">
+        <div id="response-text"></div>
+      </div>
+    </div>
+  </main>
+
+  <aside>
+    <div class="side-section">
+      <h3>Protocol State</h3>
+      <div class="kv-row"><span>Connection</span> <span id="conn-status-side">—</span></div>
+      <div class="kv-row"><span>Last cursor (seq)</span> <span id="cursor-side">0</span></div>
+    </div>
+
+    <div class="side-section" style="padding-bottom: 8px;">
+      <h3>Event Log <span style="font-weight:400;color:var(--text-dim)">(newest first)</span></h3>
+    </div>
+
+    <div class="log-scroll">
+      <ul id="event-log"></ul>
+    </div>
+  </aside>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
