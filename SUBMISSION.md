@@ -105,8 +105,18 @@ guaranteed to be in the event store.
 
 The protocol is strictly server→client for events; the client submits one POST per message. SSE is the minimal correct fit:
 - No upgrade handshake overhead
-- Browser's `EventSource` sends `Last-Event-ID` automatically — but we use an explicit `?cursor=<seq>` query param so correctness does not depend on browser behavior
-- Degrades gracefully through HTTP/1.1 proxies
+- Degrades gracefully through HTTP/1.1 proxies without a protocol upgrade
+- Native browser `EventSource` API handles low-level framing, reconnect signaling, and `Last-Event-ID` propagation
+
+### Cursor: explicit `?cursor=<seq>` over browser-native `Last-Event-ID`
+
+The browser sends `Last-Event-ID` automatically on reconnect — but only if the connection was closed by the server (network drops do not guarantee the header is sent, and the value is controlled by the SSE `id:` field which requires the server to write it correctly). We use an **explicit `?cursor=<seq>` query parameter** for reconnection instead, because:
+
+- **Reliability:** `?cursor` is always present and always reflects the last seq the client confirmed, regardless of how the connection closed. `Last-Event-ID` silently falls back to the empty string if the first SSE frame hasn't been received yet.
+- **Testability:** `?cursor` can be asserted on by test code without needing to inspect request headers across an SSE boundary.
+- **Transparency:** the cursor is visible in the URL — useful for debugging, logging, and reverse-proxy tracing.
+
+The SSE `id:` field is still written per-frame (so `Last-Event-ID` stays in sync as a free belt-and-suspenders fallback), but our server reads `?cursor`, not the header.
 
 ### Cursor = global `seq` (SQLite AUTOINCREMENT)
 
@@ -312,4 +322,10 @@ All code reviewed and debugged manually. The `node:sqlite` switch from `better-s
 
 ## Credibility Note
 
-<!-- Fill in your own credibility note here per the submission template -->
+I focus on protocol-level correctness before UI polish. This submission reflects that: every design decision has a concrete reason — the subscribe-first buffer, the persist-before-publish invariant, the `?cursor` over `Last-Event-ID`, the `DatabaseSync` synchronous write model. These aren't cargo-culted patterns; they came from working through the exact failure modes the spec is testing (silent event loss, phantom duplicates, stale-cursor ambiguity, crashed-process recovery).
+
+I'm comfortable in the full stack — Fastify route design, SQLite schema (including understanding AUTOINCREMENT vs ROWID reuse), TypeScript type safety, and browser-side state management — but I weight backend protocol correctness and testability over frontend aesthetics for infrastructure-level challenges like this.
+
+The test suite uses only `node:test` and `node:assert` — no Vitest, no Jest, no arbitrary `setTimeout` sleeps. Every scenario is deterministic. The benchmark uses a Promise gate (not a timer) to pause the generator at exactly chunk 15, release it, and confirm 0 missed + 0 duplicates after reconnection. That's the kind of discipline I bring to production systems where flaky tests mask real race conditions.
+
+GitHub: [github.com/gnshx](https://github.com/gnshx)
